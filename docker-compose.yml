@@ -1,0 +1,19 @@
+version: '3.8' # Specifies the docker-compose version
+
+services:
+  bank-app: # Defines a service named 'bank-analyser-app' (you can rename this)
+    build:
+      context: . # Specifies the build context is the current directory
+      dockerfile: Dockerfile # Specifies the Dockerfile to use for building
+    container_name: bank_analyzer_container # Assigns a specific name to the running container
+    ports:
+      - "8502:8502" # Maps port 8502 on the host to port 8502 in the container
+    volumes:
+      - .:/app # This is the key part for hot-reloading!
+        # It mounts the current directory (.) on your host machine
+        # to the /app directory inside the container (where WORKDIR is set).
+        # Changes made to files in the current directory on your host
+        # will be immediately reflected inside the container's /app directory.
+
+    # We don't need a 'command' here because the Dockerfile's ENTRYPOINT
+    # already specifies how to run the streamlit app.
