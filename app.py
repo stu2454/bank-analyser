@@ -5,605 +5,543 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from io import BytesIO
+import plotly.graph_objects as go
 
 # --- Configuration ---
 st.set_page_config(layout="wide", page_title="Bank Transaction Analyzer")
 
 # --- Categorization Logic ---
-# Define keywords for each category (lowercase for case-insensitive matching)
-# More specific keywords should come first in the list for a category if overlap exists
+# (Keep CATEGORY_KEYWORDS, UNCATEGORIZED_LABEL, ALL_CATEGORY_OPTIONS, categorize_transaction as provided)
 CATEGORY_KEYWORDS = {
-    "Income": ["ndia"],
-    "Groceries": ["haigh", "fresco", "hearthfire", "kombu","woolworths", "iga", "fuller fresh", "e.a. fuller","coles", "dorrigo deli"],
-    "Fuel": ["bp", "caltex", "shell", "ampol", "fullers fuel"],
-    "School Fees": ["st hilda's", "school fee", "edstart", "st hildas", "edutest"],
-    "Clothing": ["clothing", "clothes", "fashion", "shoes", "apparel"],
+    "Income": ["ndia", "iag"],
+    "Groceries": ["prime qual", "peaches", "haigh", "fresco", "hearthfire", "kombu","woolworths", "iga", "fuller fresh", "e.a. fuller","coles", "dorrigo deli"],
+    "Fuel/Car": ["bp", "caltex", "shell", "ampol", "fullers fuel", "reddy express", "ballina", "matade"],
+    "School Fees": ["mspgold", "sports", "st hilda's", "school fee", "edstart", "st hildas", "edutest"],
+    "Clothing": ["kmart", "myer", "blue illusion", "lorna jane", "bras", "slipsilk", "vivid", "clothing", "clothes", "fashion", "shoes", "apparel"],
     "Dogs and Chickens": ["lyka", "petbarn", "norco", "vet"],
-    "Insurance": ["nrma", "aia", "insurance","nib"],
-    "Meals & Dining": ["matilda", "coastal harvest", "maxsum", "burger", "thai", "indian", "black bear", "5 church street", "cafe", "restaurant", "mcdonalds", "kfc"],
+    "Insurance": ["nrma", "aia", "insurance","nib", "heather"],
+    "Meals & Dining": ["gelato", "eric and deb", "hyde", "oporto", "sens fusion", "fushion", "bun bun bao", "eats","matilda", "coastal harvest", "maxsum", "burger", "thai", "indian", "black bear", "5 church street", "cafe", "restaurant", "fiume"],
     "Pharmacy": ["bellingen pharmacy", "chemist", "pharmacy", "pharm"],
     "Union Fees": ["union fee", "asu", "cpsu"],
     "Rent/Mortgage": ["real estate", "rent", "mortgage"],
     "Utilities": ["energy", "water", "gas", "telstra", "optus", "vodafone", "agl", "origin"],
-    "Subscriptions": ["netflix", "spotify", "stan", "disney","apple", "primevideo"],
-    "Shopping": ["kmart", "big w", "target", "amazon", "ebay"],
-    "Transport": ["uber", "didi", "taxi", "opal", "public transport"],
-    "Health": ["outpost hair", "doctor", "dentist", "physio", "hospital", "medical", "bellingen healing", "medicare", "mcare benefits"], # Corrected key
-    "Ada": ["bun bun bao", "westpac cho ada", "savin ada", "sweet bellingen", "yy rock", "sens fushion"],
-    "Home Maintenance": ["bunnings", "hardware", "home depot", "handyman", "gardening"],
-    "Books": ["alternatives"],
+    "Subscriptions": ["netflix", "spotify", "stan", "disney", "apple", "primevideo", "new york times", "chatgpt", "openai"],
+    "Health/Personal Care": ["mecca", "bradley", "outpost hair", "doctor", "dentist", "physio", "hospital", "medical", "bellingen healing", "medicare", "mcare benefits"],
+    "Ada": [ "westpac cho ada", "savin ada", "sweet bellingen", "yy rock"],
+    "Home Maintenance": ["outdoor", "cleaner", "bunnings", "hardware", "handyman", "gardening"],
+    "Books": ["alternatives", "book", "books", "bookstore", "library"],
     "Donations": ["childfund"],
+    "Lotteries": ["lotto", "lottery", "lotteries"],
     "Misc": ["misc"],
-    # Add more categories and keywords as needed (use lowercase)
 }
-# Ensure no legacy typo keys exist
-if "Health:" in CATEGORY_KEYWORDS:
-     CATEGORY_KEYWORDS["Health"] = CATEGORY_KEYWORDS.pop("Health:")
-
-
+if "Health:" in CATEGORY_KEYWORDS: CATEGORY_KEYWORDS["Health/Personal Care"] = CATEGORY_KEYWORDS.pop("Health:") # Fix potential key mismatch if needed
 UNCATEGORIZED_LABEL = "Uncategorized"
-# Create the list of category options for the dropdown dynamically
 ALL_CATEGORY_OPTIONS = [UNCATEGORIZED_LABEL] + sorted(list(CATEGORY_KEYWORDS.keys()))
 
 def categorize_transaction(narrative, keywords_dict):
-    """
-    Categorizes a transaction based on keywords in the narrative.
-    """
-    if not isinstance(narrative, str):
-        return UNCATEGORIZED_LABEL
+    if not isinstance(narrative, str): return UNCATEGORIZED_LABEL
     narrative_lower = narrative.lower()
     for category, keywords in keywords_dict.items():
-        # Ensure keywords are lowercase for comparison during categorization itself
         keywords_lower = [k.lower() for k in keywords]
         for keyword in keywords_lower:
-            if keyword in narrative_lower:
-                return category
+            if keyword in narrative_lower: return category
     return UNCATEGORIZED_LABEL
 
-# --- Callback function to update category in Session State ---
-def update_category(row_index, selectbox_key):
-    """Callback to update the category for a specific row in session state."""
-    new_category = st.session_state[selectbox_key]
-    # Check if df_processed exists and is a DataFrame before modifying
-    if 'df_processed' in st.session_state and isinstance(st.session_state.df_processed, pd.DataFrame):
-        if row_index in st.session_state.df_processed.index:
-            st.session_state.df_processed.loc[row_index, 'Categories'] = new_category
-    # Streamlit automatically reruns on widget change
 
 # --- Calculation Functions ---
 def calculate_fortnightly_expenses(df, excluded_category="School Fees"):
-    """
-    Calculates total expenses for each 14-day period, excluding a specified category.
-    Handles potential errors and missing columns gracefully.
-
-    Args:
-        df (pd.DataFrame): The dataframe with transaction data. Must contain 'Date', 'Debit Amount', 'Categories'.
-        excluded_category (str): The category name to exclude from expense calculation.
-
-    Returns:
-        tuple: (pd.DataFrame with fortnightly sums, float average fortnightly expense)
-               Returns (empty DataFrame, 0.0) on error or if no relevant expenses.
-    """
+    """Calculates total expenses (Debit Amount > 0) fortnightly, excluding a category."""
     required_cols = ['Date', 'Debit Amount', 'Categories']
-    if df is None or not isinstance(df, pd.DataFrame):
-         # Return default empty state if df is None or not a DataFrame
-         return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
-
+    if df is None or not isinstance(df, pd.DataFrame): return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
     if not all(col in df.columns for col in required_cols):
         missing_cols = [col for col in required_cols if col not in df.columns]
-        # Display error only if columns are missing, not if df was None initially
-        st.error(f"Calculation Error: Missing columns {', '.join(missing_cols)}")
+        st.error(f"Expense Calc Error: Missing columns {', '.join(missing_cols)}")
         return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
 
     df_calc = df.copy()
-    error_occurred = False
     try:
-        # Convert Date, coercing errors to NaT (Not a Time)
         df_calc['Date'] = pd.to_datetime(df_calc['Date'], errors='coerce')
-        # Convert Debit Amount, coercing errors to NaN, then filling with 0
         df_calc['Debit Amount'] = pd.to_numeric(df_calc['Debit Amount'], errors='coerce').fillna(0)
-        # Ensure Categories is string type for reliable comparison
         df_calc['Categories'] = df_calc['Categories'].astype(str)
-
-        # Check for and handle NaT dates after conversion
-        if df_calc['Date'].isnull().any():
-            # Optionally notify the user
-            # st.warning("Some dates could not be parsed and were ignored in calculations.")
-            df_calc = df_calc.dropna(subset=['Date'])
-            if df_calc.empty:
-                 return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
-
+        df_calc.dropna(subset=['Date'], inplace=True)
+        if df_calc.empty: return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
     except Exception as e:
-        st.error(f"Error preparing columns for calculation: {e}")
-        error_occurred = True # Flag error
+        st.error(f"Error preparing expense columns: {e}")
+        return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
 
-    if error_occurred:
-         return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
-
-    # --- Filter based on criteria ---
     df_expenses = df_calc[
         (df_calc['Debit Amount'] > 0) & (df_calc['Categories'] != excluded_category)
     ].copy()
+    if df_expenses.empty: return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
 
-    if df_expenses.empty:
-        # Use st.info for expected cases like no expenses found
-        # st.info(f"No expense transactions found (excluding '{excluded_category}') for fortnightly calculation.")
-        return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0 # Return empty DataFrame and 0 average
-
-    # --- Resampling and Averaging ---
     try:
-        # Ensure Date is the index before resampling
         if not isinstance(df_expenses.index, pd.DatetimeIndex):
             df_expenses.sort_values('Date', inplace=True)
             df_expenses.set_index('Date', inplace=True)
-
-        # Resample into 14-day periods, sum expenses in each period
-        # label='right', closed='right' means the label is the end date of the period
+        # Consistent resampling parameters
         fortnightly_sum = df_expenses['Debit Amount'].resample('14D', label='right', closed='right').sum()
-
-        # Calculate average, ignoring periods with zero expense unless they are the only periods
         valid_fortnights = fortnightly_sum[fortnightly_sum > 0]
         average_expense = valid_fortnights.mean() if not valid_fortnights.empty else 0.0
-
     except Exception as e:
-        st.error(f"Error during resampling or averaging: {e}")
-        return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0 # Return empty on error
+        st.error(f"Error during expense resampling: {e}")
+        return pd.DataFrame({'Date': [], 'Debit Amount': []}), 0.0
+    return fortnightly_sum.reset_index(), average_expense
 
-    return fortnightly_sum.reset_index(), average_expense # Return DataFrame for plotting and the average
+# --- NEW FUNCTION: Calculate Fortnightly Income ---
+def calculate_fortnightly_income(df):
+    """Calculates total income (Credit Amount > 0) fortnightly."""
+    required_cols = ['Date', 'Credit Amount']
+    if df is None or not isinstance(df, pd.DataFrame): return pd.DataFrame({'Date': [], 'Credit Amount': []})
+    if not all(col in df.columns for col in required_cols):
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        st.error(f"Income Calc Error: Missing columns {', '.join(missing_cols)}")
+        return pd.DataFrame({'Date': [], 'Credit Amount': []})
+
+    df_calc = df.copy()
+    try:
+        df_calc['Date'] = pd.to_datetime(df_calc['Date'], errors='coerce')
+        df_calc['Credit Amount'] = pd.to_numeric(df_calc['Credit Amount'], errors='coerce').fillna(0)
+        df_calc.dropna(subset=['Date'], inplace=True)
+        if df_calc.empty: return pd.DataFrame({'Date': [], 'Credit Amount': []})
+    except Exception as e:
+        st.error(f"Error preparing income columns: {e}")
+        return pd.DataFrame({'Date': [], 'Credit Amount': []})
+
+    df_income = df_calc[df_calc['Credit Amount'] > 0].copy()
+    if df_income.empty: return pd.DataFrame({'Date': [], 'Credit Amount': []})
+
+    try:
+        if not isinstance(df_income.index, pd.DatetimeIndex):
+            df_income.sort_values('Date', inplace=True)
+            df_income.set_index('Date', inplace=True)
+        # Consistent resampling parameters
+        fortnightly_sum = df_income['Credit Amount'].resample('14D', label='right', closed='right').sum()
+    except Exception as e:
+        st.error(f"Error during income resampling: {e}")
+        return pd.DataFrame({'Date': [], 'Credit Amount': []})
+
+    return fortnightly_sum.reset_index()
+
 
 # --- Plotting Functions ---
+# (Keep plot_expenses_timeseries, plot_category_pie, plot_category_bar as provided)
 def plot_expenses_timeseries(fortnightly_data):
-    """Plots fortnightly expenses over time."""
-    if fortnightly_data is None or not isinstance(fortnightly_data, pd.DataFrame) or fortnightly_data.empty:
-        return None
-    if 'Date' not in fortnightly_data.columns or 'Debit Amount' not in fortnightly_data.columns:
-        st.warning("Timeseries plot error: Missing 'Date' or 'Debit Amount' in fortnightly data.")
-        return None
+    if fortnightly_data is None or not isinstance(fortnightly_data, pd.DataFrame) or fortnightly_data.empty: return None
+    if 'Date' not in fortnightly_data.columns or 'Debit Amount' not in fortnightly_data.columns: return None
     try:
-        fig = px.line(fortnightly_data, x='Date', y='Debit Amount',
-                      title="Fortnightly General Expenses Over Time (Excl. School Fees)",
-                      markers=True, labels={'Debit Amount': 'Total Expenses ($)'})
+        fig = px.line(fortnightly_data, x='Date', y='Debit Amount', title="Fortnightly General Expenses Over Time (Excl. School Fees)", markers=True, labels={'Debit Amount': 'Total Expenses ($)'})
         fig.update_layout(xaxis_title="Fortnight Period Ending", yaxis_title="Total Expenses ($)")
         return fig
-    except Exception as e:
-        st.error(f"Error creating timeseries plot: {e}")
-        return None
+    except Exception as e: st.error(f"Error creating timeseries plot: {e}"); return None
 
-def plot_category_pie(df):
-    """Plots a pie chart of expense distribution by category."""
+def plot_category_pie(df, selected_date=None):
+    """Plots expense distribution by category for a specific fortnight."""
     if df is None or not isinstance(df, pd.DataFrame): return None
-    if 'Debit Amount' not in df.columns or 'Categories' not in df.columns:
-        # st.info("Pie chart: Required columns ('Debit Amount', 'Categories') not found.")
-        return None
-
-    # Make sure calculations happen on a copy and handle non-numeric Debit Amounts
-    df_plot = df[df['Debit Amount'] > 0].copy()
+    if 'Debit Amount' not in df.columns or 'Categories' not in df.columns: return None
+    
+    # Filter data for the selected fortnight if a date is provided
+    if selected_date:
+        # Convert selected_date to datetime if it's not already
+        selected_date = pd.to_datetime(selected_date)
+        # Get the start and end of the fortnight
+        fortnight_start = selected_date - pd.Timedelta(days=13)
+        fortnight_end = selected_date
+        df_plot = df[(df['Date'] >= fortnight_start) & (df['Date'] <= fortnight_end)].copy()
+    else:
+        df_plot = df.copy()
+    
+    df_plot = df_plot[df_plot['Debit Amount'] > 0].copy()
     df_plot['Debit Amount'] = pd.to_numeric(df_plot['Debit Amount'], errors='coerce').fillna(0)
-    df_plot = df_plot[df_plot['Debit Amount'] > 0] # Filter again after coercion
-
+    df_plot = df_plot[df_plot['Debit Amount'] > 0]
     if df_plot.empty: return None
-
     try:
         expenses_by_cat = df_plot.groupby('Categories')['Debit Amount'].sum().reset_index()
-        # Exclude categories with zero sum after grouping (shouldn't happen with above filter, but safe)
         expenses_by_cat = expenses_by_cat[expenses_by_cat['Debit Amount'] > 0]
         if expenses_by_cat.empty: return None
-
-        fig = px.pie(expenses_by_cat, names='Categories', values='Debit Amount',
-                     title="Expense Distribution by Category", hole=0.3)
-        fig.update_traces(textposition='inside', textinfo='percent+label', sort=False) # Prevent auto-sorting if needed
+        
+        # Create the title with proper string formatting
+        if selected_date:
+            date_range = f" ({fortnight_start.strftime('%d %b %Y')} - {fortnight_end.strftime('%d %b %Y')})"
+        else:
+            date_range = ""
+        title = f"Expense Distribution by Category{date_range}"
+        
+        # Create a consistent color map for all categories
+        all_categories = sorted(df['Categories'].unique())
+        color_map = {cat: px.colors.qualitative.Set3[i % len(px.colors.qualitative.Set3)] 
+                    for i, cat in enumerate(all_categories)}
+        
+        # Create the pie chart with consistent colors
+        fig = px.pie(expenses_by_cat, 
+                    names='Categories', 
+                    values='Debit Amount', 
+                    title=title, 
+                    hole=0.3,
+                    color='Categories',
+                    color_discrete_map=color_map)
+        
+        fig.update_traces(textposition='inside', textinfo='percent+label', sort=False)
         return fig
-    except Exception as e:
-        st.error(f"Error creating pie chart: {e}")
-        return None
-
+    except Exception as e: st.error(f"Error creating pie chart: {e}"); return None
 
 def plot_category_bar(df):
-    """Plots a bar chart of total expenses per category."""
     if df is None or not isinstance(df, pd.DataFrame): return None
-    if 'Debit Amount' not in df.columns or 'Categories' not in df.columns:
-        # st.info("Bar chart: Required columns ('Debit Amount', 'Categories') not found.")
-        return None
-
-    # Make sure calculations happen on a copy and handle non-numeric Debit Amounts
+    if 'Debit Amount' not in df.columns or 'Categories' not in df.columns: return None
     df_plot = df[df['Debit Amount'] > 0].copy()
     df_plot['Debit Amount'] = pd.to_numeric(df_plot['Debit Amount'], errors='coerce').fillna(0)
-    df_plot = df_plot[df_plot['Debit Amount'] > 0] # Filter again after coercion
-
+    df_plot = df_plot[df_plot['Debit Amount'] > 0]
     if df_plot.empty: return None
-
     try:
         expenses_by_cat = df_plot.groupby('Categories')['Debit Amount'].sum().reset_index()
         expenses_by_cat = expenses_by_cat[expenses_by_cat['Debit Amount'] > 0]
         if expenses_by_cat.empty: return None
-
         expenses_by_cat = expenses_by_cat.sort_values('Debit Amount', ascending=False)
-        fig = px.bar(expenses_by_cat, x='Categories', y='Debit Amount',
-                     title="Total Expenses per Category", labels={'Debit Amount': 'Total Expenses ($)'})
+        fig = px.bar(expenses_by_cat, x='Categories', y='Debit Amount', title="Total Expenses per Category", labels={'Debit Amount': 'Total Expenses ($)'})
         fig.update_layout(xaxis_title="Category", yaxis_title="Total Expenses ($)")
         return fig
-    except Exception as e:
-        st.error(f"Error creating bar chart: {e}")
+    except Exception as e: st.error(f"Error creating bar chart: {e}"); return None
+
+
+# --- NEW PLOTTING FUNCTION: Income vs Expense ---
+def plot_income_vs_expense(df_combined):
+    """Plots fortnightly income vs expenses using a combined bar chart."""
+    if df_combined is None or not isinstance(df_combined, pd.DataFrame) or df_combined.empty:
+        return None
+    if not all(col in df_combined.columns for col in ['Date', 'Income', 'Expenses']):
+        st.warning("Income/Expense plot error: Missing required columns ('Date', 'Income', 'Expenses').")
         return None
 
+    try:
+        # Create a copy of the DataFrame to avoid modifying the original
+        df_plot = df_combined.copy()
+        
+        # Create the figure
+        fig = go.Figure()
+        
+        # Add income bar
+        fig.add_trace(go.Bar(
+            x=df_plot['Date'],
+            y=df_plot['Income'],
+            name='Income',
+            marker_color='green',
+            offsetgroup=0
+        ))
+        
+        # Add expenses bar
+        fig.add_trace(go.Bar(
+            x=df_plot['Date'],
+            y=df_plot['Expenses'],
+            name='Expenses',
+            marker_color='red',
+            offsetgroup=1
+        ))
+        
+        # Add school fees bar (stacked on expenses)
+        fig.add_trace(go.Bar(
+            x=df_plot['Date'],
+            y=[1908] * len(df_plot),
+            name='School Fees ($1908)',
+            marker_color='rgba(255, 0, 0, 0.1)',
+            marker_line_color='red',
+            marker_line_width=1,  # Reduced from 2 to make it more consistent with other bars
+            offsetgroup=1,
+            base=df_plot['Expenses']
+        ))
+
+        # Update the layout
+        fig.update_layout(
+            title="Fortnightly Income vs Expenses",
+            xaxis_title="Fortnight Period Ending",
+            yaxis_title="Amount ($)",
+            barmode='group',
+            bargap=0.15,
+            bargroupgap=0.1
+        )
+
+        return fig
+    except Exception as e:
+        st.error(f"Error creating Income vs Expense plot: {e}")
+        return None
+
+
 # --- Helper Function for Excel Download ---
+# (Keep to_excel as provided)
 def to_excel(df):
-    """Converts DataFrame to Excel format in memory (BytesIO)."""
     output = BytesIO()
-    # Use ExcelWriter context manager for better handling
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         if isinstance(df, pd.DataFrame):
-            # Create a copy to avoid modifying the original DataFrame in session state
             df_copy = df.copy()
-            # Attempt to convert potential numeric columns stored as objects back to numeric for Excel
             for col in ['Debit Amount', 'Credit Amount', 'Balance']:
                  if col in df_copy.columns:
-                     try:
-                        # Use errors='ignore' if conversion isn't critical and might fail
-                        df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
-                     except Exception:
-                         pass # Keep original data type if robust conversion fails
+                     try: df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
+                     except Exception: pass
             df_copy.to_excel(writer, index=False, sheet_name='Categorized Transactions')
-        else:
-            # Create an empty DataFrame if input is not valid
-            pd.DataFrame().to_excel(writer, index=False, sheet_name='No Data')
+        else: pd.DataFrame().to_excel(writer, index=False, sheet_name='No Data')
     processed_data = output.getvalue()
     return processed_data
 
 # --- Initialize Session State ---
-# Use keys consistently for session state variables
-if 'df_processed' not in st.session_state:
-    st.session_state.df_processed = None # Holds the main DataFrame after initial processing/categorization
-if 'processed_file_name' not in st.session_state:
-    st.session_state.processed_file_name = None # Tracks the name of the successfully processed file
-if 'what_if_adjustments' not in st.session_state:
-    st.session_state.what_if_adjustments = {} # Stores the percentage reduction values from sliders
+# (Keep session state initialization as provided)
+if 'df_processed' not in st.session_state: st.session_state.df_processed = None
+if 'processed_file_name' not in st.session_state: st.session_state.processed_file_name = None
+if 'what_if_adjustments' not in st.session_state: st.session_state.what_if_adjustments = {}
 
 # --- Streamlit App UI ---
 st.title("💰 Bank Transaction Analysis Tool")
 st.markdown("Upload your bank statement (Excel format) to categorize transactions, visualize spending, and explore 'What-If' scenarios.")
 
 # --- File Upload ---
-# Simple key for the uploader is usually sufficient with session state logic
-uploaded_file = st.file_uploader(
-    "Choose an Excel file (.xlsx)",
-    type="xlsx",
-    key="file_uploader"
-)
+# (Keep file upload as provided)
+uploaded_file = st.file_uploader("Choose an Excel file (.xlsx)", type="xlsx", key="file_uploader")
 
 # --- Processing Logic ---
-# Determine if a new file needs processing
+# (Keep processing logic as provided)
 process_new_file = False
 if uploaded_file is not None:
-    # Check if the file name is different from the one already processed
     if uploaded_file.name != st.session_state.get('processed_file_name', None):
         process_new_file = True
-        st.info(f"New file detected: '{uploaded_file.name}'. Processing...") # Provide feedback
-
+        st.info(f"New file detected: '{uploaded_file.name}'. Processing...")
 
 if process_new_file:
-    # Reset state variables before processing the new file
     st.session_state.df_processed = None
     st.session_state.processed_file_name = None
-    st.session_state.what_if_adjustments = {} # Clear previous adjustments
-
+    st.session_state.what_if_adjustments = {}
     try:
         df = pd.read_excel(uploaded_file, engine='openpyxl')
-
-        # --- Data Validation ---
         required_columns = ['Date', 'Narrative', 'Debit Amount', 'Credit Amount', 'Balance']
         if not all(col in df.columns for col in required_columns):
             missing = [col for col in required_columns if col not in df.columns]
-            st.error(f"Error: Missing required columns: {', '.join(missing)}. Please ensure your Excel file has these columns.")
-            # Keep state reset, do not proceed
+            st.error(f"Error: Missing required columns: {', '.join(missing)}.")
         else:
-            # --- Basic Data Cleaning and Type Conversion ---
             try:
-                # Convert Date, coerce errors, drop rows where date is invalid (NaT)
                 df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
                 initial_rows = len(df)
                 df.dropna(subset=['Date'], inplace=True)
-                if len(df) < initial_rows:
-                     st.warning(f"Dropped {initial_rows - len(df)} rows due to invalid date entries.")
-            except Exception as e:
-                st.error(f"Critical error converting 'Date' column: {e}")
-                # Stop processing if date conversion fails fundamentally
-                df = None # Prevent further processing
-
-            if df is not None: # Proceed only if Date conversion was successful
-                # Convert numeric columns, coerce errors to NaN, fill with 0
+                if len(df) < initial_rows: st.warning(f"Dropped {initial_rows - len(df)} rows due to invalid date entries.")
+            except Exception as e: st.error(f"Critical error converting 'Date' column: {e}"); df = None
+            if df is not None:
                 for col in ['Debit Amount', 'Credit Amount', 'Balance']:
-                     if col in df.columns:
-                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-                # --- Automatic Categorization ---
+                     if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 df_processed = df.copy()
-                # Ensure Narrative is string, fill NaNs if necessary
                 df_processed['Narrative'] = df_processed['Narrative'].fillna('').astype(str)
-
-                # Apply categorization logic
                 if 'Categories' not in df_processed.columns:
                      df_processed['Categories'] = df_processed['Narrative'].apply(lambda x: categorize_transaction(x, CATEGORY_KEYWORDS))
                 else:
-                    # Handle existing 'Categories' column: fill NaNs, ensure string, recategorize empty/'Uncategorized'
                     st.info("Existing 'Categories' column found. Applying auto-categorization to empty or 'Uncategorized' rows.")
                     df_processed['Categories'] = df_processed['Categories'].fillna(UNCATEGORIZED_LABEL).astype(str)
-                    mask_needs_categorizing = (df_processed['Categories'].str.strip() == '') | \
-                                              (df_processed['Categories'].str.lower() == 'uncategorized') | \
-                                              (df_processed['Categories'] == UNCATEGORIZED_LABEL) # Explicit check
+                    mask_needs_categorizing = (df_processed['Categories'].str.strip() == '') | (df_processed['Categories'].str.lower() == 'uncategorized') | (df_processed['Categories'] == UNCATEGORIZED_LABEL)
                     df_processed.loc[mask_needs_categorizing, 'Categories'] = df_processed.loc[mask_needs_categorizing, 'Narrative'].apply(lambda x: categorize_transaction(x, CATEGORY_KEYWORDS))
-
-                # --- Store results in Session State ---
                 st.session_state.df_processed = df_processed
                 st.session_state.processed_file_name = uploaded_file.name
                 st.success(f"File '{uploaded_file.name}' processed successfully!")
-                # Rerun is essential after successful processing to update the entire display based on the new state
                 st.rerun()
-
     except Exception as e:
         st.error(f"An unexpected error occurred during file processing: {e}")
-        st.exception(e) # Provides traceback for debugging
-        # Ensure state is reset on any processing error
+        st.exception(e)
         st.session_state.df_processed = None
         st.session_state.processed_file_name = None
         st.session_state.what_if_adjustments = {}
 
-
 # --- Display and Interaction Area ---
-# This block runs on every script rerun IF df_processed is available in session state
 if isinstance(st.session_state.get('df_processed'), pd.DataFrame):
-    # Make a local reference for easier access within this block
     current_df = st.session_state.df_processed
 
     st.write("---")
     st.header("📊 Transaction Data")
     st.write(f"Displaying data from: **{st.session_state.processed_file_name}**")
-    # Display the current state of the DataFrame (could have manual updates)
+    # Display the full dataframe (read-only view here)
     st.dataframe(current_df)
 
-    # --- Manual Categorization Section ---
+    # --- Manual Categorization Section using st.data_editor ---
+    # (Keep data_editor section as modified previously)
     st.write("---")
     st.header("✏️ Manual Categorization")
-
-    # Find uncategorized rows directly from the session state DataFrame
     uncategorized_mask = current_df['Categories'] == UNCATEGORIZED_LABEL
-    uncategorized_count = uncategorized_mask.sum()
-
-    if uncategorized_count > 0:
-        st.warning(f"Found {uncategorized_count} transactions needing manual categorization.")
-        st.markdown("**Assign a category using the dropdowns below:**")
-
-        # Prepare columns for layout outside the loop
-        col_date, col_narrative, col_amount, col_category = st.columns([1, 4, 1, 2])
-
-        # Header row for this section
-        with col_date: st.write("**Date**")
-        with col_narrative: st.write("**Narrative**")
-        with col_amount: st.write("**Amount ($)**")
-        with col_category: st.write("**Select Category**")
-        st.divider() # Visual separator after header
-
-        # Iterate through the *indices* of the uncategorized rows
-        for idx in current_df[uncategorized_mask].index:
-            row = current_df.loc[idx] # Get the row data for this index
-            # Generate a unique key for the selectbox widget for this specific row
-            selectbox_key = f"category_select_{idx}"
-
-            # Display row data and selectbox in columns
-            with col_date:
-                date_val = row.get('Date')
-                # Check if Date is a valid timestamp before formatting
-                if pd.notnull(date_val) and isinstance(date_val, pd.Timestamp):
-                    st.write(date_val.strftime('%Y-%m-%d'))
-                else:
-                    st.write(str(date_val)) # Display as string if not expected format
-            with col_narrative:
-                st.write(row.get('Narrative', 'N/A')) # Use .get for safety
-            with col_amount:
-                amount = row.get('Debit Amount', 0)
-                # Format as currency, handle potential NaN/None
-                st.write(f"{amount:,.2f}" if pd.notnull(amount) else "N/A")
-            with col_category:
-                # Find the index of the current category in the options list
-                current_category = row.get('Categories', UNCATEGORIZED_LABEL)
-                try:
-                    default_index = ALL_CATEGORY_OPTIONS.index(current_category)
-                except ValueError:
-                    default_index = ALL_CATEGORY_OPTIONS.index(UNCATEGORIZED_LABEL) # Fallback
-
-                st.selectbox(
-                    label=f"Category for row {idx}", # Hidden label, but unique
-                    options=ALL_CATEGORY_OPTIONS,
-                    index=default_index,
-                    key=selectbox_key, # Crucial: Unique key for state management
-                    label_visibility="collapsed", # Hide the label text
-                    on_change=update_category, # Callback function
-                    args=(idx, selectbox_key) # Pass index and key to callback
-                )
-            # Optional: Add a divider between editable rows if needed
-            # st.divider()
-
+    df_to_edit = current_df.loc[uncategorized_mask, ['Date', 'Narrative', 'Debit Amount', 'Categories']].copy()
+    if not df_to_edit.empty:
+        st.warning(f"Found {len(df_to_edit)} transactions needing manual categorization.")
+        st.markdown("**Select the correct category from the dropdown in the 'Categories' column below:**")
+        column_config = {
+            "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", disabled=True),
+            "Narrative": st.column_config.TextColumn("Narrative", disabled=True),
+            "Debit Amount": st.column_config.NumberColumn("Amount ($)", format="$%.2f", disabled=True),
+            "Categories": st.column_config.SelectboxColumn("Category", options=ALL_CATEGORY_OPTIONS, required=True)
+        }
+        edited_df = st.data_editor(df_to_edit, column_config=column_config, hide_index=True, use_container_width=True, key="category_editor")
+        if not edited_df.reset_index(drop=True).equals(df_to_edit.reset_index(drop=True)):
+             st.info("Applying category changes...")
+             st.session_state.df_processed.loc[edited_df.index, 'Categories'] = edited_df['Categories']
+             st.rerun()
     else:
         st.success("✅ All transactions are currently categorized!")
 
+
     # --- Download Button ---
+    # (Keep as provided)
     st.download_button(
         label="📥 Download Categorized Data as Excel",
-        data=to_excel(current_df), # Pass the potentially updated DataFrame
-        file_name=f'categorized_{st.session_state.processed_file_name}', # Include original filename
+        data=to_excel(current_df),
+        file_name=f'categorized_{st.session_state.processed_file_name}',
         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         key='download_button'
     )
 
-    # --- Fortnightly Expense Calculation (Based on Current Data) ---
+    # --- Fortnightly Analysis Section ---
+    # Calculate BOTH income and expenses here
     st.write("---")
-    st.header("💹 Fortnightly General Expense Analysis (Excl. School Fees)")
-    # Calculate based on the *current* state of the DataFrame in session state
+    st.header("💹 Fortnightly Analysis")
     fortnightly_expenses_df, avg_fortnightly_expense = calculate_fortnightly_expenses(current_df)
+    fortnightly_income_df = calculate_fortnightly_income(current_df) # Calculate income
 
-    # Display the calculated average (if successful)
+    # --- Display Average Expense Metric ---
     if fortnightly_expenses_df is not None and not fortnightly_expenses_df.empty:
-        st.metric(label="Current Average Fortnightly General Expense", value=f"${avg_fortnightly_expense:,.2f}")
-        # Expander to show the detailed fortnightly data
-        with st.expander("View Current Fortnightly General Expense Data"):
-            st.dataframe(fortnightly_expenses_df.style.format({"Date": "{:%Y-%m-%d}", "Debit Amount": "${:,.2f}"}))
+        st.metric(label="Current Average Fortnightly General Expense (Excl. School Fees)", value=f"${avg_fortnightly_expense:,.2f}")
+        # Remove the expander for the expense data table here if it feels redundant with the new plot
+        # with st.expander("View Current Fortnightly General Expense Data"):
+        #    st.dataframe(fortnightly_expenses_df.style.format({"Date": "{:%Y-%m-%d}", "Debit Amount": "${:,.2f}"}))
     else:
-        # Info/error messages are handled within calculate_fortnightly_expenses if needed
-        st.info("Fortnightly expense calculation did not yield results (check data or filters).")
+        st.info("Fortnightly expense calculation did not yield results.")
 
+    # --- Combine Income and Expense Data for Plotting ---
+    combined_fortnightly_df = None
+    if fortnightly_income_df is not None and fortnightly_expenses_df is not None:
+        # Rename columns for clarity before merging
+        fortnightly_income_df = fortnightly_income_df.rename(columns={'Credit Amount': 'Income'})
+        fortnightly_expenses_df_plot = fortnightly_expenses_df.rename(columns={'Debit Amount': 'Expenses'}) # Use a different var name to keep original expense df
+
+        # Merge income and expenses on Date
+        combined_fortnightly_df = pd.merge(
+            fortnightly_income_df[['Date', 'Income']],
+            fortnightly_expenses_df_plot[['Date', 'Expenses']],
+            on='Date',
+            how='outer' # Keep all periods, even if only income or expense exists
+        ).fillna(0).sort_values(by='Date') # Fill missing values with 0 and sort
+
+        # Add Narrative column with a placeholder value for plotting
+        combined_fortnightly_df['Narrative'] = 'Fortnightly Summary'
 
     # --- What-If Scenario Analysis Section ---
+    # (Keep as provided - uses avg_fortnightly_expense calculated above)
     st.write("---")
     st.header("🔮 What-If Scenario Analysis")
     st.markdown("Adjust spending percentages below to see the potential impact on your average fortnightly expenses (excluding School Fees).")
-
-    # Identify relevant expense categories from the current data
-    # Exclude Income, the specified excluded category (School Fees), and Uncategorized
     try:
-        expense_categories = sorted([
-            cat for cat in current_df['Categories'].unique()
-            if cat not in ["Income", "School Fees", UNCATEGORIZED_LABEL] and pd.notna(cat)
-        ])
-    except Exception as e:
-        st.error(f"Error identifying expense categories: {e}")
-        expense_categories = []
-
-
+        expense_categories = sorted([cat for cat in current_df['Categories'].unique() if cat not in ["Income", "School Fees", UNCATEGORIZED_LABEL] and pd.notna(cat)])
+    except Exception as e: st.error(f"Error identifying expense categories: {e}"); expense_categories = []
     if not expense_categories:
         st.info("No adjustable expense categories found in the data (after excluding Income, School Fees, Uncategorized).")
     else:
         st.markdown("**Set Percentage Reduction (%) for Categories:**")
-
-        # Use session state dictionary to store slider values
         what_if_adjustments = st.session_state.what_if_adjustments
-
-        # Use columns for better layout of sliders
-        cols = st.columns(3) # Adjust number based on preference
+        cols = st.columns(3)
         col_idx = 0
         for category in expense_categories:
             slider_key = f"what_if_{category}"
-            # Get current value from session state, default to 0 if not set
             current_value = what_if_adjustments.get(slider_key, 0)
-
-            # Place slider in the next available column
             with cols[col_idx % len(cols)]:
-                 # Update the session state directly via the slider's value
-                 what_if_adjustments[slider_key] = st.slider(
-                     f"Reduce {category} by:",
-                     min_value=0,
-                     max_value=100,
-                     value=current_value,
-                     step=5,
-                     key=slider_key, # Unique key for the slider widget
-                     help=f"Set the percentage to reduce spending for '{category}'."
-                 )
+                 what_if_adjustments[slider_key] = st.slider(f"Reduce {category} by:", min_value=0, max_value=100, value=current_value, step=5, key=slider_key, help=f"Set the percentage to reduce spending for '{category}'.")
             col_idx += 1
-
-        # --- Apply Adjustments and Recalculate ---
-        # IMPORTANT: Always work on a copy for hypothetical calculations
         df_hypothetical = current_df.copy()
-
-        # Ensure Debit Amount is numeric before modification
         df_hypothetical['Debit Amount'] = pd.to_numeric(df_hypothetical['Debit Amount'], errors='coerce').fillna(0)
-
-        # Apply the reductions based on slider values (from session state)
         for category, percentage in what_if_adjustments.items():
-             # Extract category name from the key 'what_if_CategoryName'
              cat_name = category.replace("what_if_", "")
              if percentage > 0 and cat_name in df_hypothetical['Categories'].values:
                  mask = df_hypothetical['Categories'] == cat_name
-                 # Apply reduction factor
                  df_hypothetical.loc[mask, 'Debit Amount'] *= (1 - percentage / 100.0)
-
-        # Recalculate the average using the modified (hypothetical) DataFrame
         _, avg_hypothetical_expense = calculate_fortnightly_expenses(df_hypothetical)
-
-        # --- Display What-If Results ---
-        st.write("---") # Separator
+        st.write("---")
         col1_whatif, col2_whatif, col3_whatif = st.columns(3)
-        with col1_whatif:
-            st.metric(
-                label="Current Avg Fortnightly",
-                value=f"${avg_fortnightly_expense:,.2f}" # Original average
-            )
-        with col2_whatif:
-             st.metric(
-                label="Hypothetical Avg Fortnightly",
-                value=f"${avg_hypothetical_expense:,.2f}" # Average after reductions
-            )
+        with col1_whatif: st.metric(label="Current Avg Fortnightly", value=f"${avg_fortnightly_expense:,.2f}")
+        with col2_whatif: st.metric(label="Hypothetical Avg Fortnightly", value=f"${avg_hypothetical_expense:,.2f}")
         with col3_whatif:
             savings = avg_fortnightly_expense - avg_hypothetical_expense
-            # Delta shows the difference; color indicates direction (green=savings)
-            st.metric(
-                label="Potential Fortnightly Savings",
-                value=f"${savings:,.2f}",
-                delta=f"{savings:.2f}", # Use delta to show the change amount
-                delta_color="normal" # "normal" shows green for positive delta (savings)
-            )
-
-        # Optional: Add target feedback
+            st.metric(label="Potential Fortnightly Savings", value=f"${savings:,.2f}", delta=f"{savings:.2f}", delta_color="normal")
         target_savings = 500
         target_fortnightly = avg_fortnightly_expense - target_savings
-        if avg_hypothetical_expense <= target_fortnightly:
-             st.success(f"🎉 Goal Achieved! Hypothetical average (${avg_hypothetical_expense:,.2f}) meets or beats the target savings of ${target_savings:,.2f}/fortnight.")
-        else:
-             st.warning(f"⚠️ Keep Adjusting: Hypothetical average (${avg_hypothetical_expense:,.2f}) is above the target savings goal (needs to be ~${target_fortnightly:,.2f} or less).")
+        if avg_hypothetical_expense <= target_fortnightly: st.success(f"🎉 Goal Achieved! Hypothetical average (${avg_hypothetical_expense:,.2f}) meets or beats the target savings of ${target_savings:,.2f}/fortnight.")
+        else: st.warning(f"⚠️ Keep Adjusting: Hypothetical average (${avg_hypothetical_expense:,.2f}) is above the target savings goal (needs to be ~${target_fortnightly:,.2f} or less).")
 
 
-    # --- Visualizations Section (Based on Current Data) ---
+    # --- Visualizations Section ---
     st.write("---")
-    st.header("📈 Visualizations (Based on Current Data)")
-    st.markdown("These charts reflect the *current* state of your categorized data.")
+    st.header("📈 Visualizations")
+    # Move Income vs Expense plot here
+    st.subheader("Fortnightly Income vs Expense")
+    fig_income_expense = plot_income_vs_expense(combined_fortnightly_df)
+    if fig_income_expense:
+        st.plotly_chart(fig_income_expense, use_container_width=True)
+    else:
+        st.info("Insufficient data to display Income vs Expense chart.")
 
-    # Use the actual current DataFrame for plots, not the hypothetical one
-    current_df_for_plots = current_df
-
-    # Use columns for plot layout
+    # Keep original plots, perhaps in columns below the new one or adjust layout
+    st.write("---") # Add separator
     col_viz1, col_viz2 = st.columns(2)
     with col_viz1:
-        st.subheader("Expense Breakdown")
-        fig_pie = plot_category_pie(current_df_for_plots)
+        st.subheader("Expense Breakdown (All Categories)")
+        
+        # Add date slider for selecting fortnight
+        if not current_df.empty:
+            # Convert dates to datetime and get min/max
+            min_date = pd.to_datetime(current_df['Date'].min())
+            max_date = pd.to_datetime(current_df['Date'].max())
+            
+            # Create a list of fortnight end dates
+            fortnight_dates = pd.date_range(start=min_date, end=max_date, freq='14D')
+            if len(fortnight_dates) == 0:
+                fortnight_dates = [max_date]
+            
+            # Create a dictionary of date strings to actual dates
+            date_options = {date.strftime('%d %b %Y'): date for date in fortnight_dates}
+            
+            # Create the slider using the date strings
+            selected_date_str = st.select_slider(
+                "Select Fortnight End Date",
+                options=list(date_options.keys()),
+                value=list(date_options.keys())[-1]  # Default to most recent
+            )
+            
+            # Convert back to datetime for the plot
+            selected_date = date_options[selected_date_str]
+        
+        fig_pie = plot_category_pie(current_df, selected_date) # Plot pie based on selected fortnight
         if fig_pie: st.plotly_chart(fig_pie, use_container_width=True)
         else: st.info("No expense data available for pie chart.")
 
-        fig_bar = plot_category_bar(current_df_for_plots)
+        st.subheader("Total Expenses per Category")
+        fig_bar = plot_category_bar(current_df) # Plot bar based on all current data
         if fig_bar: st.plotly_chart(fig_bar, use_container_width=True)
         else: st.info("No expense data available for bar chart.")
 
     with col_viz2:
-        st.subheader("Expenses Over Time")
-        # Use the original fortnightly calculation results for the timeseries plot
+        st.subheader("General Expenses Over Time (Excl. School Fees)")
+        # Use the original fortnightly expense calculation results for the timeseries plot
         fig_timeseries = plot_expenses_timeseries(fortnightly_expenses_df)
         if fig_timeseries: st.plotly_chart(fig_timeseries, use_container_width=True)
         else: st.info("No fortnightly expense data available to plot over time.")
 
 
 # --- Initial State Message ---
-# Show message only if no file has been uploaded *at all* in this session run
+# (Keep as provided)
 elif not uploaded_file and st.session_state.get('df_processed') is None:
     st.info("Awaiting Excel file upload...")
-# If uploaded_file exists but df_processed is None, it implies an error occurred during processing,
-# and the error message should already be displayed above.
 
 # --- Sidebar Information ---
+# (Keep as provided)
 st.sidebar.title("About")
-st.sidebar.info(
-    """
+st.sidebar.info("""
     This app helps analyze bank transactions:
     1.  **Upload** your Excel statement.
     2.  Transactions are **auto-categorized**.
-    3.  **Manually correct** categories if needed.
-    4.  View **fortnightly expense** summaries.
+    3.  **Manually correct** categories using the editable table below.
+    4.  View **fortnightly** income/expense summaries & charts.
     5.  Use **'What-If' sliders** to explore budget changes.
     6.  Explore interactive **charts**.
     7.  **Download** the categorized data.
-    """
-)
+    """)
 st.sidebar.title("Categories & Keywords")
-# Format keywords for display (readability)
 display_keywords = {cat: ', '.join(kw) for cat, kw in CATEGORY_KEYWORDS.items()}
 with st.sidebar.expander("View Keywords (Code Level)"):
-    st.json(display_keywords) # Use json for nice formatting
+    st.json(display_keywords)
 st.sidebar.markdown("*(To permanently add/modify keywords, edit the `CATEGORY_KEYWORDS` dictionary in the `app.py` script and restart the app.)*")
 
 # --- END OF FILE app.py ---
