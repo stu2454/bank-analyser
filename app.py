@@ -13,40 +13,114 @@ st.set_page_config(layout="wide", page_title="Bank Transaction Analyzer")
 # --- Categorization Logic ---
 # (Keep CATEGORY_KEYWORDS, UNCATEGORIZED_LABEL, ALL_CATEGORY_OPTIONS, categorize_transaction as provided)
 CATEGORY_KEYWORDS = {
-    "Income": ["ndia", "iag"],
-    "Groceries": ["prime qual", "peaches", "haigh", "fresco", "hearthfire", "kombu","woolworths", "iga", "fuller fresh", "e.a. fuller","coles", "dorrigo deli"],
-    "Fuel/Car": ["bp", "caltex", "shell", "ampol", "fullers fuel", "reddy express", "ballina", "matade"],
-    "School Fees": ["mspgold", "sports", "st hilda's", "school fee", "edstart", "st hildas", "edutest"],
-    "Clothing": ["kmart", "myer", "blue illusion", "lorna jane", "bras", "slipsilk", "vivid", "clothing", "clothes", "fashion", "shoes", "apparel"],
+    "Income": ["ndia", "iag", "medicare benefit", "iag dividend", "heather smith christmas shopping"],
+    "Groceries": ["peaches patisser", "prime qual", "peaches", "haigh", "smp*fresco market", "hearthfire", "kombu", "woolworths", "iga", "fuller fresh", "e.a. fuller", "coles", "dorrigo deli"],
+    "Fuel/Car": ["bp ", "caltex", "shell", "ampol", "fullers fuel", "reddy express", "ballina", "matade"],
+    "School Fees": ["edstart"],
+    "School other": ["school other","mspgoldcoastnor", "sports", "st hilda's", "school fee", "st hildas", "edutest"],
+    "Clothing": ["just group", "kmart", "myer", "blue illusion", "lorna jane", "bras", "slipsilk", "vivid", "clothing", "clothes", "fashion", "shoes", "apparel", "adore beauty"],
     "Dogs and Chickens": ["lyka", "petbarn", "norco", "vet"],
-    "Insurance": ["nrma", "aia", "insurance","nib", "heather"],
-    "Meals & Dining": ["gelato", "eric and deb", "hyde", "oporto", "sens fusion", "fushion", "bun bun bao", "eats","matilda", "coastal harvest", "maxsum", "burger", "thai", "indian", "black bear", "5 church street", "cafe", "restaurant", "fiume"],
+    "Insurance": ["nrma", "aia", "insurance", "nib", "service nsw sydney"],
+    "Meals & Dining": ["boost coffs", "eats help.ub er.com", "gelato", "eric and deb", "hyde", "oporto", "sens fusion", "fushion", "bun bun bao", "eats", "matilda's pantry", "coastal harvest", "maxsum", "burger", "thai", "indian", "black bear", "5 church street", "cafe", "restaurant", "fiume", "bellingen kitchen", "brooki bakehouse"],
     "Pharmacy": ["bellingen pharmacy", "chemist", "pharmacy", "pharm"],
     "Union Fees": ["union fee", "asu", "cpsu"],
-    "Rent/Mortgage": ["real estate", "rent", "mortgage"],
-    "Utilities": ["energy", "water", "gas", "telstra", "optus", "vodafone", "agl", "origin"],
-    "Subscriptions": ["netflix", "spotify", "stan", "disney", "apple", "primevideo", "new york times", "chatgpt", "openai"],
+    "Rates": ["bellingen rates", "bellingen feb rates", "bpay bellingen rates", "rates"],
+    "Utilities": ["energy", "water", "gas", "telstra", "optus", "vodafone", "agl", "origin", "energyaust", "bpay energyaust"],
+    "Subscriptions": ["stan.com.au", "netflix", "spotify", "stan.com.au", "disney", "apple.com/bill", "primevideo", "new york times", "chatgpt", "openai"],
     "Health/Personal Care": ["mecca", "bradley", "outpost hair", "doctor", "dentist", "physio", "hospital", "medical", "bellingen healing", "medicare", "mcare benefits"],
-    "Ada": [ "westpac cho ada", "savin ada", "sweet bellingen", "yy rock"],
-    "Home Maintenance": ["outdoor", "cleaner", "bunnings", "hardware", "handyman", "gardening"],
-    "Books": ["alternatives", "book", "books", "bookstore", "library"],
+    "Ada": ["westpac cho ada", "savin ada", "sweet bellingen", "yy rock"],
+    "Home Maintenance": ["outdoor", "cleaner", "bunnings", "hardware", "handyman", "gardening", "officeworks"],
+    "Books": ["alternatives boo ksbellingen", "book", "books", "bookstore", "library", "box of books"],
     "Donations": ["childfund"],
     "Lotteries": ["lotto", "lottery", "lotteries"],
     "Misc": ["misc"],
+    "Entertainment": ["birch carroll", "cinema", "evt-cinema"],
+    "Furniture/Homewares": ["pillow talk", "spotlight"]
 }
 if "Health:" in CATEGORY_KEYWORDS: CATEGORY_KEYWORDS["Health/Personal Care"] = CATEGORY_KEYWORDS.pop("Health:") # Fix potential key mismatch if needed
 UNCATEGORIZED_LABEL = "Uncategorized"
 ALL_CATEGORY_OPTIONS = [UNCATEGORIZED_LABEL] + sorted(list(CATEGORY_KEYWORDS.keys()))
 
+# Add this function to normalize keywords
+def normalize_keywords(keywords_dict):
+    """Convert all keywords to lowercase to ensure case-insensitive matching."""
+    normalized = {}
+    for category, keywords in keywords_dict.items():
+        normalized[category] = [kw.lower() for kw in keywords]
+    return normalized
+
+# Normalize the keywords dictionary
+CATEGORY_KEYWORDS = normalize_keywords(CATEGORY_KEYWORDS)
+
 def categorize_transaction(narrative, keywords_dict):
     if not isinstance(narrative, str): return UNCATEGORIZED_LABEL
     narrative_lower = narrative.lower()
+    
+    # Clean the narrative by removing special characters and extra spaces
+    cleaned_narrative = ' '.join(narrative_lower.split())
+    cleaned_narrative = cleaned_narrative.replace('\\', ' ').replace('/', ' ').replace('*', ' ')
+    
+    # Remove common location words that might appear after the business name
+    location_words = ['sydney', 'australia', 'aus', 'nsw', 'coffs harbour', 'coffs', 'harbour', 'bellingen']
+    cleaned_narrative = ' '.join(word for word in cleaned_narrative.split() if word not in location_words)
+    
+    # For URLs, also try matching without the domain extension
+    url_cleaned = cleaned_narrative.replace('.com', '').replace('.au', '').replace('.net', '')
+    
+    # Split the narrative into words for more precise matching
+    narrative_words = set(cleaned_narrative.split())
+    url_words = set(url_cleaned.split())
+    
+    # First try exact word matches
     for category, keywords in keywords_dict.items():
-        keywords_lower = [k.lower() for k in keywords]
-        for keyword in keywords_lower:
-            if keyword in narrative_lower: return category
+        for keyword in keywords:
+            # Clean the keyword in the same way
+            clean_keyword = keyword.lower().replace('*', ' ').replace('/', ' ').replace('\\', ' ')
+            clean_keyword = ' '.join(word for word in clean_keyword.split() if word not in location_words)
+            
+            # For single-word keywords, require exact word match
+            if ' ' not in clean_keyword:
+                # Try both original and URL-cleaned versions
+                if clean_keyword in narrative_words or clean_keyword in url_words:
+                    return category
+            # For multi-word keywords, allow partial match
+            elif ' ' in clean_keyword:
+                # Try both original and URL-cleaned versions
+                if clean_keyword in cleaned_narrative or clean_keyword in url_cleaned:
+                    return category
+    
     return UNCATEGORIZED_LABEL
 
+# Add this function to help debug categorization
+def debug_categorization(narrative, keywords_dict):
+    if not isinstance(narrative, str): return "Not a string"
+    narrative_lower = narrative.lower()
+    matches = []
+    
+    for category, keywords in keywords_dict.items():
+        for keyword in keywords:
+            if keyword.lower() in narrative_lower:
+                matches.append(f"Matched '{keyword}' in category '{category}'")
+    
+    return "\n".join(matches) if matches else "No matches found"
+
+# Add this debug function
+def analyze_transaction(narrative, keywords_dict):
+    """Analyze a transaction to see which keywords match and why."""
+    if not isinstance(narrative, str): return "Not a string"
+    narrative_lower = narrative.lower()
+    analysis = []
+    
+    # Check each category
+    for category, keywords in keywords_dict.items():
+        matches = []
+        for keyword in keywords:
+            if keyword in narrative_lower:
+                matches.append(keyword)
+        if matches:
+            analysis.append(f"Category '{category}' matches: {', '.join(matches)}")
+    
+    return "\n".join(analysis) if analysis else "No matches found"
 
 # --- Calculation Functions ---
 def calculate_fortnightly_expenses(df, excluded_category="School Fees"):
@@ -203,7 +277,7 @@ def plot_category_bar(df):
 
 
 # --- NEW PLOTTING FUNCTION: Income vs Expense ---
-def plot_income_vs_expense(df_combined):
+def plot_income_vs_expense(df_combined, pay_adjustment=0, exact_amount=None):
     """Plots fortnightly income vs expenses using a combined bar chart."""
     if df_combined is None or not isinstance(df_combined, pd.DataFrame) or df_combined.empty:
         return None
@@ -212,8 +286,24 @@ def plot_income_vs_expense(df_combined):
         return None
 
     try:
+        import plotly.graph_objects as go
+        
         # Create a copy of the DataFrame to avoid modifying the original
         df_plot = df_combined.copy()
+        
+        # Apply pay adjustment if specified
+        if pay_adjustment != 0:
+            # Calculate your current salary (total income - wife's salary)
+            wife_salary = 2874.77  # Your wife's constant salary
+            your_current_salary = df_plot['Income'].iloc[0] - wife_salary
+            # Apply percentage adjustment to your salary only
+            your_adjusted_salary = your_current_salary * (1 + pay_adjustment/100)
+            # Set new total income (your adjusted salary + wife's salary)
+            df_plot['Income'] = your_adjusted_salary + wife_salary
+        elif exact_amount is not None:
+            # Set new total income (your new salary + wife's salary)
+            wife_salary = 2874.77  # Your wife's constant salary
+            df_plot['Income'] = exact_amount + wife_salary
         
         # Create the figure
         fig = go.Figure()
@@ -243,14 +333,21 @@ def plot_income_vs_expense(df_combined):
             name='School Fees ($1908)',
             marker_color='rgba(255, 0, 0, 0.1)',
             marker_line_color='red',
-            marker_line_width=1,  # Reduced from 2 to make it more consistent with other bars
+            marker_line_width=1,
             offsetgroup=1,
             base=df_plot['Expenses']
         ))
 
         # Update the layout
+        title = "Fortnightly Income vs Expenses"
+        if pay_adjustment != 0:
+            title += f" (Your salary adjusted by {pay_adjustment}%)"
+        elif exact_amount is not None:
+            total_income = exact_amount + 2874.77
+            title += f" (Your salary: ${exact_amount:,.2f}, Total: ${total_income:,.2f})"
+            
         fig.update_layout(
-            title="Fortnightly Income vs Expenses",
+            title=title,
             xaxis_title="Fortnight Period Ending",
             yaxis_title="Amount ($)",
             barmode='group',
@@ -285,6 +382,8 @@ def to_excel(df):
 if 'df_processed' not in st.session_state: st.session_state.df_processed = None
 if 'processed_file_name' not in st.session_state: st.session_state.processed_file_name = None
 if 'what_if_adjustments' not in st.session_state: st.session_state.what_if_adjustments = {}
+if 'what_if_pay_adjustment' not in st.session_state:
+    st.session_state.what_if_pay_adjustment = 0
 
 # --- Streamlit App UI ---
 st.title("💰 Bank Transaction Analysis Tool")
@@ -324,6 +423,34 @@ if process_new_file:
                      if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 df_processed = df.copy()
                 df_processed['Narrative'] = df_processed['Narrative'].fillna('').astype(str)
+                
+                # Display analysis in an expander at the top
+                with st.expander("🔍 Transaction Analysis (Click to expand)", expanded=True):
+                    st.write("### Problematic Transactions Analysis")
+                    problematic_transactions = [
+                        "WITHDRAWAL MOBILE 6776510 BPAY Bellingen Rates",
+                        "WITHDRAWAL MOBILE 2519635 BPAY EnergyAust"
+                    ]
+                    
+                    for transaction in problematic_transactions:
+                        st.write("---")
+                        st.write(f"#### Transaction: `{transaction}`")
+                        
+                        # Show analysis
+                        analysis = analyze_transaction(transaction, CATEGORY_KEYWORDS)
+                        st.write("**Matching Analysis:**")
+                        st.write(analysis)
+                        
+                        # Show actual categorization
+                        category = categorize_transaction(transaction, CATEGORY_KEYWORDS)
+                        st.write(f"**Final Category:** {category}")
+                        
+                        # Show relevant keywords
+                        st.write("**Relevant Keywords:**")
+                        for cat, keywords in CATEGORY_KEYWORDS.items():
+                            if any(kw in transaction.lower() for kw in keywords):
+                                st.write(f"- {cat}: {', '.join(kw for kw in keywords if kw in transaction.lower())}")
+                
                 if 'Categories' not in df_processed.columns:
                      df_processed['Categories'] = df_processed['Narrative'].apply(lambda x: categorize_transaction(x, CATEGORY_KEYWORDS))
                 else:
@@ -331,6 +458,7 @@ if process_new_file:
                     df_processed['Categories'] = df_processed['Categories'].fillna(UNCATEGORIZED_LABEL).astype(str)
                     mask_needs_categorizing = (df_processed['Categories'].str.strip() == '') | (df_processed['Categories'].str.lower() == 'uncategorized') | (df_processed['Categories'] == UNCATEGORIZED_LABEL)
                     df_processed.loc[mask_needs_categorizing, 'Categories'] = df_processed.loc[mask_needs_categorizing, 'Narrative'].apply(lambda x: categorize_transaction(x, CATEGORY_KEYWORDS))
+                
                 st.session_state.df_processed = df_processed
                 st.session_state.processed_file_name = uploaded_file.name
                 st.success(f"File '{uploaded_file.name}' processed successfully!")
@@ -402,72 +530,59 @@ if isinstance(st.session_state.get('df_processed'), pd.DataFrame):
     else:
         st.info("Fortnightly expense calculation did not yield results.")
 
-    # --- Combine Income and Expense Data for Plotting ---
+    # --- Visualizations Section ---
+    st.write("---")
+    st.header("📈 Visualizations")
+    
+    # Calculate combined income and expenses data here
     combined_fortnightly_df = None
     if fortnightly_income_df is not None and fortnightly_expenses_df is not None:
         # Rename columns for clarity before merging
         fortnightly_income_df = fortnightly_income_df.rename(columns={'Credit Amount': 'Income'})
-        fortnightly_expenses_df_plot = fortnightly_expenses_df.rename(columns={'Debit Amount': 'Expenses'}) # Use a different var name to keep original expense df
+        fortnightly_expenses_df_plot = fortnightly_expenses_df.rename(columns={'Debit Amount': 'Expenses'})
 
         # Merge income and expenses on Date
         combined_fortnightly_df = pd.merge(
             fortnightly_income_df[['Date', 'Income']],
             fortnightly_expenses_df_plot[['Date', 'Expenses']],
             on='Date',
-            how='outer' # Keep all periods, even if only income or expense exists
-        ).fillna(0).sort_values(by='Date') # Fill missing values with 0 and sort
+            how='outer'
+        ).fillna(0).sort_values(by='Date')
 
         # Add Narrative column with a placeholder value for plotting
         combined_fortnightly_df['Narrative'] = 'Fortnightly Summary'
-
-    # --- What-If Scenario Analysis Section ---
-    # (Keep as provided - uses avg_fortnightly_expense calculated above)
-    st.write("---")
-    st.header("🔮 What-If Scenario Analysis")
-    st.markdown("Adjust spending percentages below to see the potential impact on your average fortnightly expenses (excluding School Fees).")
-    try:
-        expense_categories = sorted([cat for cat in current_df['Categories'].unique() if cat not in ["Income", "School Fees", UNCATEGORIZED_LABEL] and pd.notna(cat)])
-    except Exception as e: st.error(f"Error identifying expense categories: {e}"); expense_categories = []
-    if not expense_categories:
-        st.info("No adjustable expense categories found in the data (after excluding Income, School Fees, Uncategorized).")
-    else:
-        st.markdown("**Set Percentage Reduction (%) for Categories:**")
-        what_if_adjustments = st.session_state.what_if_adjustments
-        cols = st.columns(3)
-        col_idx = 0
-        for category in expense_categories:
-            slider_key = f"what_if_{category}"
-            current_value = what_if_adjustments.get(slider_key, 0)
-            with cols[col_idx % len(cols)]:
-                 what_if_adjustments[slider_key] = st.slider(f"Reduce {category} by:", min_value=0, max_value=100, value=current_value, step=5, key=slider_key, help=f"Set the percentage to reduce spending for '{category}'.")
-            col_idx += 1
-        df_hypothetical = current_df.copy()
-        df_hypothetical['Debit Amount'] = pd.to_numeric(df_hypothetical['Debit Amount'], errors='coerce').fillna(0)
-        for category, percentage in what_if_adjustments.items():
-             cat_name = category.replace("what_if_", "")
-             if percentage > 0 and cat_name in df_hypothetical['Categories'].values:
-                 mask = df_hypothetical['Categories'] == cat_name
-                 df_hypothetical.loc[mask, 'Debit Amount'] *= (1 - percentage / 100.0)
-        _, avg_hypothetical_expense = calculate_fortnightly_expenses(df_hypothetical)
-        st.write("---")
-        col1_whatif, col2_whatif, col3_whatif = st.columns(3)
-        with col1_whatif: st.metric(label="Current Avg Fortnightly", value=f"${avg_fortnightly_expense:,.2f}")
-        with col2_whatif: st.metric(label="Hypothetical Avg Fortnightly", value=f"${avg_hypothetical_expense:,.2f}")
-        with col3_whatif:
-            savings = avg_fortnightly_expense - avg_hypothetical_expense
-            st.metric(label="Potential Fortnightly Savings", value=f"${savings:,.2f}", delta=f"{savings:.2f}", delta_color="normal")
-        target_savings = 500
-        target_fortnightly = avg_fortnightly_expense - target_savings
-        if avg_hypothetical_expense <= target_fortnightly: st.success(f"🎉 Goal Achieved! Hypothetical average (${avg_hypothetical_expense:,.2f}) meets or beats the target savings of ${target_savings:,.2f}/fortnight.")
-        else: st.warning(f"⚠️ Keep Adjusting: Hypothetical average (${avg_hypothetical_expense:,.2f}) is above the target savings goal (needs to be ~${target_fortnightly:,.2f} or less).")
-
-
-    # --- Visualizations Section ---
-    st.write("---")
-    st.header("📈 Visualizations")
+    
+    # Add What-If Pay Adjustment Section
+    st.subheader("What-If Pay Adjustment")
+    
+    # Create two columns for the adjustment options
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Percentage Adjustment**")
+        pay_adjustment = st.slider(
+            "Adjust Take-Home Pay (%)",
+            min_value=-50,
+            max_value=100,
+            value=0,
+            step=5,
+            help="Adjust your take-home pay by percentage to see the impact on the income vs expenses chart"
+        )
+    
+    with col2:
+        st.markdown("**Exact Amount**")
+        exact_amount = st.number_input(
+            "Set Your New Fortnightly Salary ($)",
+            min_value=0.0,
+            max_value=10000.0,
+            value=0.0,
+            step=100.0,
+            help="Set your new fortnightly salary amount. Your wife's salary ($2,874.77) will be added to this amount."
+        )
+    
     # Move Income vs Expense plot here
     st.subheader("Fortnightly Income vs Expense")
-    fig_income_expense = plot_income_vs_expense(combined_fortnightly_df)
+    fig_income_expense = plot_income_vs_expense(combined_fortnightly_df, pay_adjustment, exact_amount if exact_amount > 0 else None)
     if fig_income_expense:
         st.plotly_chart(fig_income_expense, use_container_width=True)
     else:
